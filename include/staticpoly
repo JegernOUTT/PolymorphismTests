@@ -1,0 +1,232 @@
+//
+// Created by svakhreev on 05.06.17.
+//
+
+#ifndef POLYMORPHISMTESTS_FUNCS_HPP
+#define POLYMORPHISMTESTS_FUNCS_HPP
+
+#include "utils.hpp"
+
+namespace staticpoly
+{
+
+template <
+           typename InputIter,
+           typename InputSentinelIter,
+           typename... Callable
+         >
+constexpr void apply(InputIter beg,
+                     InputSentinelIter end,
+                     Callable&&... funcs)
+{
+    for (auto _it = beg; _it != end; ++_it)
+        std::visit(utility::overloaded { std::forward<Callable>(funcs)...,
+                                         [](...){} }, *_it);
+};
+
+
+template <
+           typename InputIter,
+           typename InputSentinelIter,
+           typename OutputIter,
+           typename... Callable
+         >
+constexpr void filter(InputIter beg,
+                      InputSentinelIter end,
+                      OutputIter out,
+                      Callable&&... funcs)
+{
+    for (auto _it = beg; _it != end; ++_it)
+    {
+        if (std::visit(utility::overloaded{ std::forward<std::remove_reference_t<Callable>>(funcs)...,
+                                            [](...) { return false; } },
+                       *_it))
+            *out++ = *_it;
+    }
+};
+
+
+namespace _impl
+{
+
+template <
+           typename InputIter,
+           typename InputSentinelIter,
+           typename AccType,
+           bool IsGeneric,
+           typename... Callable
+         >
+struct reduce_impl;
+
+template <
+           typename InputIter,
+           typename InputSentinelIter,
+           typename AccType,
+           typename... Callable
+         >
+struct reduce_impl < InputIter, InputSentinelIter, AccType, true, Callable... >
+{
+    constexpr auto operator()(InputIter beg, InputSentinelIter end,
+                              AccType initial_acc, Callable&&... funcs)
+    {
+        auto [first_func] = std::tuple<Callable...> { std::forward<Callable>(funcs)... };
+
+        for (auto _it = beg; _it != end; ++_it)
+        {
+            initial_acc = visit(utility::overloaded {
+                                    [&initial_acc, &first_func] (auto&& arg) { return first_func(initial_acc,
+                                                                                                 std::forward<decltype(arg)>(arg)); } },
+                                *_it);
+        }
+        return initial_acc;
+    }
+};
+
+template <
+           typename InputIter,
+           typename InputSentinelIter,
+           typename AccType,
+           typename... Callable
+         >
+struct reduce_impl < InputIter, InputSentinelIter, AccType, false, Callable... >
+{
+    constexpr auto operator()(InputIter beg, InputSentinelIter end,
+                              AccType initial_acc, Callable&&... funcs)
+    {
+        for (auto _it = beg; _it != end; ++_it)
+        {
+            initial_acc = std::visit(utility::make_overloaded_from_tup(
+                utility::tup_funcs(initial_acc,
+                                   std::forward<Callable>(funcs)...),
+                std::make_index_sequence<sizeof...(Callable)>{},
+                [&initial_acc](...) { return initial_acc; } ),
+                                     *_it);
+        }
+        return initial_acc;
+    }
+};
+
+template <
+           typename InputIter,
+           typename InputIterSentinel,
+           typename AccType,
+           typename... UnderlyingTypes,
+           typename... Callable
+         >
+constexpr auto reduce_helper(InputIter beg, InputIterSentinel end,
+                             AccType& acc, std::variant<UnderlyingTypes...>,
+                             Callable&&... funcs)
+{
+    return reduce_impl <
+                         InputIter, InputIterSentinel, AccType,
+                         (... && utility::is_generic_2nd<Callable, AccType, UnderlyingTypes...>()),
+                         Callable...
+                       > {}
+        (beg, end, acc, std::forward<Callable>(funcs)...);
+};
+
+}
+
+template <
+           typename InputIter,
+           typename InputIterSentinel,
+           typename AccType,
+           typename... Callable
+         >
+constexpr auto reduce(InputIter beg, InputIterSentinel end,
+                      AccType acc, Callable&&... funcs)
+{
+    return _impl::reduce_helper(beg, end, acc,
+                                *beg, std::forward<Callable>(funcs)...);
+};
+
+
+namespace _impl
+{
+
+template <
+           typename InputIter,
+           typename InputIterSentinel,
+           typename OutputIter,
+           bool IsGeneric,
+           typename... Callable
+         >
+struct map_impl;
+
+template <
+           typename InputIter,
+           typename InputIterSentinel,
+           typename OutputIter,
+           typename... Callable
+         >
+struct map_impl<InputIter, InputIterSentinel, OutputIter, true, Callable...> {
+    constexpr void operator()(InputIter beg, InputIterSentinel end,
+                              OutputIter out, Callable&&... func) {
+        for (auto _it = beg; _it != end; ++_it) {
+            auto value = std::visit(std::forward<Callable>(func)..., *_it);
+            *out++ = value;
+        }
+    }
+};
+
+template <
+           typename InputIter,
+           typename InputIterSentinel,
+           typename OutputIter,
+           typename... Callable
+         >
+struct map_impl<InputIter, InputIterSentinel, OutputIter, false, Callable...> {
+    constexpr void operator()(InputIter beg, InputIterSentinel end,
+                              OutputIter out, Callable &&... funcs) {
+        using ValueType = typename OutputIter::container_type::value_type;
+        using ValueOptionalType = std::optional<ValueType>;
+
+        for (auto _it = beg; _it != end; ++_it) {
+
+            auto maybe_value = std::visit(utility::make_overloaded_from_tup(
+                utility::tup_funcs_opt(std::forward<Callable>(funcs)...),
+                std::make_index_sequence<sizeof...(Callable)>{},
+                [](...) { return ValueOptionalType{}; }),
+                                          *_it++);
+            if (maybe_value)
+                *out++ = maybe_value.value();
+        }
+    }
+};
+
+}
+
+template <
+           typename InputIter,
+           typename InputIterSentinel,
+           typename OutputIter,
+           typename... UnderlyingTypes,
+           typename... Callable
+         >
+constexpr void map_helper(InputIter beg, InputIterSentinel end,
+                          OutputIter out, std::variant<UnderlyingTypes...>,
+                          Callable&&... funcs)
+{
+    _impl::map_impl <
+                      InputIter, InputIterSentinel, OutputIter,
+                      (... && utility::is_generic<Callable, UnderlyingTypes...>()),
+                      Callable...
+                    > {}
+    (beg, end, out, std::forward<Callable>(funcs)...);
+};
+
+template <
+           typename InputIter,
+           typename InputIterSentinel,
+           typename OutputIter,
+           typename... Callable
+         >
+constexpr void map(InputIter beg, InputIterSentinel end,
+                   OutputIter out, Callable&&... funcs)
+{
+    map_helper(beg, end, out, *beg, std::forward<Callable>(funcs)...);
+};
+
+}
+
+#endif //POLYMORPHISMTESTS_FUNCS_HPP
