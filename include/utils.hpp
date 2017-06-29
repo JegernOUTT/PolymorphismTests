@@ -92,9 +92,9 @@ using first_argument = decltype(_first_arg_hlpr(&Func::operator()));
 template < typename... Callable >
 constexpr auto tup_funcs_opt(Callable&&... funcs)
 {
-    return tuple_transform(std::tuple<Callable...>{ std::forward<Callable...>(funcs)... }, [](auto&& func) {
+    return tuple_transform(std::tuple<Callable...>{ std::forward<Callable>(funcs)... }, [](auto&& func) {
         return [&func] (first_argument<std::remove_reference_t<decltype(func)>> arg) {
-        return std::make_optional(func(std::forward<std::remove_reference_t<decltype(arg)>>(arg))); };
+        return std::make_optional(func(std::forward<decltype(arg)>(arg))); };
     });
 }
 
