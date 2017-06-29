@@ -5,7 +5,7 @@
 #include <memory>
 #include <range/v3/all.hpp>
 
-#include "staticpoly"
+#include "./staticpoly.hpp"
 
 using namespace std;
 
